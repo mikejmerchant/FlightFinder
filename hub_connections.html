@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>FlightFinder — Hub Airport Connections</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  #header {
+    padding: 12px 20px;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  #header h1 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #f0f6fc;
+    letter-spacing: -0.01em;
+  }
+  #header .subtitle {
+    font-size: 0.78rem;
+    color: #8b949e;
+  }
+  #hub-count {
+    margin-left: auto;
+    font-size: 0.78rem;
+    color: #8b949e;
+    white-space: nowrap;
+  }
+  #main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+  #sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: #161b22;
+    border-right: 1px solid #30363d;
+    overflow-y: auto;
+    padding: 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .sidebar-section h3 {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #8b949e;
+    margin-bottom: 10px;
+  }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: #c9d1d9;
+    margin-bottom: 5px;
+  }
+  .legend-dot {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 1.5px solid rgba(255,255,255,0.3);
+  }
+  .top-hub {
+    padding: 8px 10px;
+    background: #0d1117;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 0.8rem;
+  }
+  .top-hub b { font-size: 0.9rem; color: #f0f6fc; }
+  .top-gap { color: #8b949e; font-size: 0.75rem; margin-left: 6px; }
+  .top-pair { color: #8b949e; font-size: 0.72rem; margin-top: 2px; }
+  #map {
+    flex: 1;
+  }
+  /* Popup styles */
+  .popup { font-family: 'Segoe UI', system-ui, sans-serif; }
+  .popup-header {
+    font-size: 1.1rem; font-weight: 700;
+    color: #0d1117; margin-bottom: 2px;
+  }
+  .popup-sub {
+    font-size: 0.72rem; color: #666;
+    margin-bottom: 10px; text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .popup-table {
+    width: 100%; border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+  .popup-table th {
+    text-align: left; font-weight: 600;
+    padding: 3px 6px; background: #f0f6fc;
+    font-size: 0.7rem; color: #444;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .popup-table td {
+    padding: 4px 6px; border-bottom: 1px solid #e8e8e8;
+    color: #1a1a2e;
+  }
+  .pair-header td {
+    background: #e8f0fe; font-size: 0.72rem; color: #333;
+    padding: 5px 6px 3px; border-bottom: 1px solid #ccc;
+  }
+  .gap-row td {
+    background: #f8f9fa; font-size: 0.78rem; color: #333;
+    border-bottom: 2px solid #dee2e6;
+  }
+  .popup-footer {
+    margin-top: 8px; font-size: 0.72rem; color: #888;
+  }
+  #no-hubs-msg {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(22,27,34,0.95);
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 24px 32px;
+    text-align: center;
+    color: #8b949e;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    z-index: 1000;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="header">
+  <span style="font-size:1.4rem">✈️</span>
+  <div>
+    <h1>FlightFinder — Hub Airport Connections</h1>
+    <div class="subtitle">Direct flight hubs with best arrival sync · click a pin for details</div>
+  </div>
+  <div id="hub-count">3 arrival hubs · 7 departure hubs · 8 ruled out</div>
+</div>
+<div id="main">
+  <div id="sidebar">
+    <div class="sidebar-section">
+      <h3>Sync gap</h3>
+      <div class="legend-row"><span class="legend-dot" style="background:#00c853"></span>0 – 15 min</div>
+<div class="legend-row"><span class="legend-dot" style="background:#66bb00"></span>15 – 30 min</div>
+<div class="legend-row"><span class="legend-dot" style="background:#ffab00"></span>30 – 60 min</div>
+<div class="legend-row"><span class="legend-dot" style="background:#ff5500"></span>60 – 90 min</div>
+<div class="legend-row"><span class="legend-dot" style="background:#d50000"></span>90 – 120 min</div>
+<div class="legend-row"><span class="legend-dot" style="background:#7f0000"></span>> 120 min</div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Shape key</h3>
+      <div class="legend-row">
+        <svg width="14" height="14" style="flex-shrink:0"><circle cx="7" cy="7" r="6" fill="#8b949e" stroke="#fff" stroke-width="1.5"/></svg>
+        Arrival (outbound)
+      </div>
+      <div class="legend-row">
+        <svg width="14" height="14" style="flex-shrink:0"><rect x="1" y="1" width="12" height="12" rx="2" fill="#8b949e" stroke="#fff" stroke-width="1.5"/></svg>
+        Departure (return)
+      </div>
+      <div class="legend-row" style="margin-top:8px;opacity:0.7">
+        <svg width="14" height="14" style="flex-shrink:0"><circle cx="7" cy="7" r="5" fill="#555" stroke="#888" stroke-width="1.5"/></svg>
+        Ruled out (one traveller)
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Top hubs</h3>
+      <div class="top-hub" style="border-left:4px solid #00c853"><b>GVA</b> <span class="top-gap">same time</span><div class="top-pair">Charlie + Mike</div></div><div class="top-hub" style="border-left:4px solid #00c853"><b>CTA</b> <span class="top-gap">same time</span><div class="top-pair">Charlie + Mike</div></div><div class="top-hub" style="border-left:4px solid #00c853"><b>BCN</b> <span class="top-gap">same time</span><div class="top-pair">Charlie + Mike</div></div><div class="top-hub" style="border-left:4px solid #15c54c"><b>FCO</b> <span class="top-gap">5m</span><div class="top-pair">Charlie + Mike</div></div><div class="top-hub" style="border-left:4px solid #2ac345"><b>NCE</b> <span class="top-gap">10m</span><div class="top-pair">Charlie + Mike</div></div>
+    </div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script>
+  var map = L.map('map', {
+    center: [42.511, 8.331],
+    zoom: 4,
+    zoomControl: true,
+  });
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 19
+  }).addTo(map);
+
+
+  L.circleMarker([46.238, 6.109], {
+    radius:      22,
+    fillColor:   "#00c853",
+    color:       "#fff",
+    weight:      2,
+    opacity:     1,
+    fillOpacity: 0.92
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>GVA</div><div class='popup-sub'>OUTBOUND · 7 date(s)</div><table class='popup-table'><thead><tr><th>Date</th><th>Charlie A</th><th>Mike B</th><th>Arrival gap</th><th>Total</th></tr></thead><tbody><tr class='pair-header'><td colspan='5'><b>Charlie</b> LGW→GVA &nbsp;+&nbsp; <b>Mike</b> MAN→GVA</td></tr><tr><td>Mon 10 Aug</td><td>4:10 PM</td><td>4:05 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£348 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Tue 11 Aug</td><td>10:50 AM</td><td>10:55 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£422 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Wed 12 Aug</td><td>8:20 PM</td><td>8:15 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£282 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Thu 13 Aug</td><td>8:20 PM</td><td>8:20 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#00c853;margin-right:4px;vertical-align:middle'></span>same time</td><td>£256 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Fri 14 Aug</td><td>8:10 PM</td><td>8:05 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£275 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sat 15 Aug</td><td>9:35 AM</td><td>9:55 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#55be37;margin-right:4px;vertical-align:middle'></span>20m</td><td>£442 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sun 16 Aug</td><td>8:10 PM</td><td>8:15 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£331 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr></tbody></table></div>`, {maxWidth: 420})
+  .bindTooltip("✈ GVA · arrival same time", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.circleMarker([43.658, 7.215], {
+    radius:      22,
+    fillColor:   "#15c54c",
+    color:       "#fff",
+    weight:      2,
+    opacity:     1,
+    fillOpacity: 0.92
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>NCE</div><div class='popup-sub'>OUTBOUND · 7 date(s)</div><table class='popup-table'><thead><tr><th>Date</th><th>Charlie A</th><th>Mike B</th><th>Arrival gap</th><th>Total</th></tr></thead><tbody><tr class='pair-header'><td colspan='5'><b>Charlie</b> LHR→NCE &nbsp;+&nbsp; <b>Mike</b> LPL→NCE</td></tr><tr><td>Mon 10 Aug</td><td>1:55 PM</td><td>1:40 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#3fc03e;margin-right:4px;vertical-align:middle'></span>15m</td><td>£338 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Tue 11 Aug</td><td>9:50 AM</td><td>9:40 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#2ac345;margin-right:4px;vertical-align:middle'></span>10m</td><td>£526 <span style='color:#27ae60;font-size:0.68rem'>yesterday</span></td></tr><tr><td>Wed 12 Aug</td><td>8:55 PM</td><td>10:50 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#d80e00;margin-right:4px;vertical-align:middle'></span>1h 55m</td><td>£266 <span style='color:#27ae60;font-size:0.68rem'>yesterday</span></td></tr><tr><td>Thu 13 Aug</td><td>10:25 AM</td><td>10:20 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£412 <span style='color:#27ae60;font-size:0.68rem'>yesterday</span></td></tr><tr><td>Fri 14 Aug</td><td>9:00 PM</td><td>9:05 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£326 <span style='color:#27ae60;font-size:0.68rem'>yesterday</span></td></tr><tr><td>Sat 15 Aug</td><td>9:10 AM</td><td>9:45 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#94b722;margin-right:4px;vertical-align:middle'></span>35m</td><td>£498 <span style='color:#27ae60;font-size:0.68rem'>yesterday</span></td></tr><tr><td>Sun 16 Aug</td><td>8:50 PM</td><td>9:00 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#2ac345;margin-right:4px;vertical-align:middle'></span>10m</td><td>£392 <span style='color:#27ae60;font-size:0.68rem'>yesterday</span></td></tr></tbody></table></div>`, {maxWidth: 420})
+  .bindTooltip("✈ NCE · arrival 5m", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.circleMarker([43.437, 5.215], {
+    radius:      21,
+    fillColor:   "#3fc03e",
+    color:       "#fff",
+    weight:      2,
+    opacity:     1,
+    fillOpacity: 0.92
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>MRS</div><div class='popup-sub'>OUTBOUND · 4 date(s)</div><table class='popup-table'><thead><tr><th>Date</th><th>Charlie A</th><th>Mike B</th><th>Arrival gap</th><th>Total</th></tr></thead><tbody><tr class='pair-header'><td colspan='5'><b>Charlie</b> LGW→MRS &nbsp;+&nbsp; <b>Mike</b> MAN→MRS</td></tr><tr><td>Mon 10 Aug</td><td>10:10 AM</td><td>11:25 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#f48000;margin-right:4px;vertical-align:middle'></span>1h 15m</td><td>£283 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Wed 12 Aug</td><td>9:10 AM</td><td>9:25 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#3fc03e;margin-right:4px;vertical-align:middle'></span>15m</td><td>£288 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Thu 13 Aug</td><td>8:05 PM</td><td>6:30 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#e64700;margin-right:4px;vertical-align:middle'></span>1h 35m</td><td>£239 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sun 16 Aug</td><td>9:00 AM</td><td>10:05 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#fb9c00;margin-right:4px;vertical-align:middle'></span>1h 5m</td><td>£332 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr></tbody></table></div>`, {maxWidth: 420})
+  .bindTooltip("✈ MRS · arrival 15m", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.marker([37.467, 15.066], {
+    icon: L.divIcon({
+      className: "",
+      html: `<div style="
+        width:36px; height:36px;
+        background:#00c853;
+        border:2.5px solid #fff;
+        border-radius:3px;
+        opacity:0.92;
+        box-shadow:0 1px 4px rgba(0,0,0,0.5);
+      "></div>`,
+      iconSize:   [36, 36],
+      iconAnchor: [18, 18]
+    })
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>CTA</div><div class='popup-sub'>INBOUND · 2 date(s)</div><table class='popup-table'><thead><tr><th>Date</th><th>Charlie A</th><th>Mike B</th><th>Departure gap</th><th>Total</th></tr></thead><tbody><tr class='pair-header'><td colspan='5'><b>Charlie</b> CTA→LGW &nbsp;+&nbsp; <b>Mike</b> CTA→MAN</td></tr><tr><td>Wed 19 Aug</td><td>2:05 PM</td><td>2:05 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#00c853;margin-right:4px;vertical-align:middle'></span>same time</td><td>£506 <span style='color:#27ae60;font-size:0.68rem'>yesterday</span></td></tr><tr><td>Fri 21 Aug</td><td>2:35 PM</td><td>12:35 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#7f0000;margin-right:4px;vertical-align:middle'></span>14h</td><td>£516 <span style='color:#27ae60;font-size:0.68rem'>yesterday</span></td></tr></tbody></table></div>`, {maxWidth: 420})
+  .bindTooltip("🛫 CTA · departure same time", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.marker([46.238, 6.109], {
+    icon: L.divIcon({
+      className: "",
+      html: `<div style="
+        width:36px; height:36px;
+        background:#00c853;
+        border:2.5px solid #fff;
+        border-radius:3px;
+        opacity:0.92;
+        box-shadow:0 1px 4px rgba(0,0,0,0.5);
+      "></div>`,
+      iconSize:   [36, 36],
+      iconAnchor: [18, 18]
+    })
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>GVA</div><div class='popup-sub'>INBOUND · 7 date(s)</div><table class='popup-table'><thead><tr><th>Date</th><th>Charlie A</th><th>Mike B</th><th>Departure gap</th><th>Total</th></tr></thead><tbody><tr class='pair-header'><td colspan='5'><b>Charlie</b> GVA→LHR &nbsp;+&nbsp; <b>Mike</b> GVA→MAN</td></tr><tr><td>Mon 17 Aug</td><td>8:15 AM</td><td>8:15 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#00c853;margin-right:4px;vertical-align:middle'></span>same time</td><td>£333 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Tue 18 Aug</td><td>10:10 PM</td><td>10:10 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#00c853;margin-right:4px;vertical-align:middle'></span>same time</td><td>£381 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Wed 19 Aug</td><td>8:15 AM</td><td>8:15 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#00c853;margin-right:4px;vertical-align:middle'></span>same time</td><td>£333 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Thu 20 Aug</td><td>9:35 PM</td><td>9:50 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#3fc03e;margin-right:4px;vertical-align:middle'></span>15m</td><td>£252 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Fri 21 Aug</td><td>9:35 PM</td><td>9:35 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#00c853;margin-right:4px;vertical-align:middle'></span>same time</td><td>£224 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sat 22 Aug</td><td>10:40 AM</td><td>11:25 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#bfb214;margin-right:4px;vertical-align:middle'></span>45m</td><td>£346 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sun 23 Aug</td><td>8:15 AM</td><td>8:15 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#00c853;margin-right:4px;vertical-align:middle'></span>same time</td><td>£418 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr></tbody></table></div>`, {maxWidth: 420})
+  .bindTooltip("🛫 GVA · departure same time", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.marker([41.297, 2.078], {
+    icon: L.divIcon({
+      className: "",
+      html: `<div style="
+        width:36px; height:36px;
+        background:#00c853;
+        border:2.5px solid #fff;
+        border-radius:3px;
+        opacity:0.92;
+        box-shadow:0 1px 4px rgba(0,0,0,0.5);
+      "></div>`,
+      iconSize:   [36, 36],
+      iconAnchor: [18, 18]
+    })
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>BCN</div><div class='popup-sub'>INBOUND · 7 date(s)</div><table class='popup-table'><thead><tr><th>Date</th><th>Charlie A</th><th>Mike B</th><th>Departure gap</th><th>Total</th></tr></thead><tbody><tr class='pair-header'><td colspan='5'><b>Charlie</b> BCN→LGW &nbsp;+&nbsp; <b>Mike</b> BCN→MAN</td></tr><tr><td>Mon 17 Aug</td><td>12:05 PM</td><td>12:00 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£389 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Tue 18 Aug</td><td>6:15 PM</td><td>6:20 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£422 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Wed 19 Aug</td><td>12:40 PM</td><td>12:40 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#00c853;margin-right:4px;vertical-align:middle'></span>same time</td><td>£354 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Thu 20 Aug</td><td>2:35 PM</td><td>2:40 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£382 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Fri 21 Aug</td><td>11:10 PM</td><td>11:10 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#00c853;margin-right:4px;vertical-align:middle'></span>same time</td><td>£284 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sat 22 Aug</td><td>1:40 PM</td><td>1:40 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#00c853;margin-right:4px;vertical-align:middle'></span>same time</td><td>£332 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sun 23 Aug</td><td>12:45 PM</td><td>12:40 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£442 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr></tbody></table></div>`, {maxWidth: 420})
+  .bindTooltip("🛫 BCN · departure same time", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.marker([41.8, 12.239], {
+    icon: L.divIcon({
+      className: "",
+      html: `<div style="
+        width:35px; height:35px;
+        background:#15c54c;
+        border:2.5px solid #fff;
+        border-radius:3px;
+        opacity:0.92;
+        box-shadow:0 1px 4px rgba(0,0,0,0.5);
+      "></div>`,
+      iconSize:   [35, 35],
+      iconAnchor: [17, 17]
+    })
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>FCO</div><div class='popup-sub'>INBOUND · 4 date(s)</div><table class='popup-table'><thead><tr><th>Date</th><th>Charlie A</th><th>Mike B</th><th>Departure gap</th><th>Total</th></tr></thead><tbody><tr class='pair-header'><td colspan='5'><b>Charlie</b> FCO→LHR &nbsp;+&nbsp; <b>Mike</b> FCO→MAN</td></tr><tr><td>Sun 16 Aug</td><td>10:35 PM</td><td>10:30 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£545 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Mon 17 Aug</td><td>1:00 PM</td><td>12:40 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#55be37;margin-right:4px;vertical-align:middle'></span>20m</td><td>£558 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Wed 19 Aug</td><td>2:10 PM</td><td>2:15 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#15c54c;margin-right:4px;vertical-align:middle'></span>5m</td><td>£573 <span style='color:#27ae60;font-size:0.68rem'>yesterday</span></td></tr><tr><td>Sat 22 Aug</td><td>1:00 PM</td><td>1:55 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#e9ad06;margin-right:4px;vertical-align:middle'></span>55m</td><td>£491 <span style='color:#27ae60;font-size:0.68rem'>yesterday</span></td></tr></tbody></table></div>`, {maxWidth: 420})
+  .bindTooltip("🛫 FCO · departure 5m", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.marker([43.437, 5.215], {
+    icon: L.divIcon({
+      className: "",
+      html: `<div style="
+        width:34px; height:34px;
+        background:#2ac345;
+        border:2.5px solid #fff;
+        border-radius:3px;
+        opacity:0.92;
+        box-shadow:0 1px 4px rgba(0,0,0,0.5);
+      "></div>`,
+      iconSize:   [34, 34],
+      iconAnchor: [17, 17]
+    })
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>MRS</div><div class='popup-sub'>INBOUND · 2 date(s)</div><table class='popup-table'><thead><tr><th>Date</th><th>Charlie A</th><th>Mike B</th><th>Departure gap</th><th>Total</th></tr></thead><tbody><tr class='pair-header'><td colspan='5'><b>Charlie</b> MRS→LGW &nbsp;+&nbsp; <b>Mike</b> MRS→MAN</td></tr><tr><td>Wed 19 Aug</td><td>10:50 AM</td><td>11:00 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#2ac345;margin-right:4px;vertical-align:middle'></span>10m</td><td>£395 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sun 23 Aug</td><td>11:10 AM</td><td>11:40 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#7fb929;margin-right:4px;vertical-align:middle'></span>30m</td><td>£519 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr></tbody></table></div>`, {maxWidth: 420})
+  .bindTooltip("🛫 MRS · departure 10m", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.marker([43.658, 7.215], {
+    icon: L.divIcon({
+      className: "",
+      html: `<div style="
+        width:34px; height:34px;
+        background:#2ac345;
+        border:2.5px solid #fff;
+        border-radius:3px;
+        opacity:0.92;
+        box-shadow:0 1px 4px rgba(0,0,0,0.5);
+      "></div>`,
+      iconSize:   [34, 34],
+      iconAnchor: [17, 17]
+    })
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>NCE</div><div class='popup-sub'>INBOUND · 7 date(s)</div><table class='popup-table'><thead><tr><th>Date</th><th>Charlie A</th><th>Mike B</th><th>Departure gap</th><th>Total</th></tr></thead><tbody><tr class='pair-header'><td colspan='5'><b>Charlie</b> NCE→LGW &nbsp;+&nbsp; <b>Mike</b> NCE→MAN</td></tr><tr><td>Mon 17 Aug</td><td>4:00 PM</td><td>3:45 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#3fc03e;margin-right:4px;vertical-align:middle'></span>15m</td><td>£346 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Tue 18 Aug</td><td>11:40 AM</td><td>11:30 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#2ac345;margin-right:4px;vertical-align:middle'></span>10m</td><td>£499 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Wed 19 Aug</td><td>6:45 PM</td><td>7:00 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#3fc03e;margin-right:4px;vertical-align:middle'></span>15m</td><td>£350 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Thu 20 Aug</td><td>12:40 PM</td><td>12:15 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#6abb30;margin-right:4px;vertical-align:middle'></span>25m</td><td>£406 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Fri 21 Aug</td><td>6:40 PM</td><td>6:30 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#2ac345;margin-right:4px;vertical-align:middle'></span>10m</td><td>£464 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sat 22 Aug</td><td>11:20 AM</td><td>11:45 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#6abb30;margin-right:4px;vertical-align:middle'></span>25m</td><td>£494 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sun 23 Aug</td><td>10:45 PM</td><td>11:00 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#3fc03e;margin-right:4px;vertical-align:middle'></span>15m</td><td>£410 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr></tbody></table></div>`, {maxWidth: 420})
+  .bindTooltip("🛫 NCE · departure 10m", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.marker([43.683, 10.393], {
+    icon: L.divIcon({
+      className: "",
+      html: `<div style="
+        width:34px; height:34px;
+        background:#2ac345;
+        border:2.5px solid #fff;
+        border-radius:3px;
+        opacity:0.92;
+        box-shadow:0 1px 4px rgba(0,0,0,0.5);
+      "></div>`,
+      iconSize:   [34, 34],
+      iconAnchor: [17, 17]
+    })
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>PSA</div><div class='popup-sub'>INBOUND · 7 date(s)</div><table class='popup-table'><thead><tr><th>Date</th><th>Charlie A</th><th>Mike B</th><th>Departure gap</th><th>Total</th></tr></thead><tbody><tr class='pair-header'><td colspan='5'><b>Charlie</b> PSA→LGW &nbsp;+&nbsp; <b>Mike</b> PSA→MAN</td></tr><tr><td>Mon 17 Aug</td><td>3:00 PM</td><td>3:30 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#7fb929;margin-right:4px;vertical-align:middle'></span>30m</td><td>£361 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Tue 18 Aug</td><td>11:35 AM</td><td>11:45 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#2ac345;margin-right:4px;vertical-align:middle'></span>10m</td><td>£558 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Wed 19 Aug</td><td>11:05 AM</td><td>11:45 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#aab41b;margin-right:4px;vertical-align:middle'></span>40m</td><td>£344 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Thu 20 Aug</td><td>11:05 AM</td><td>11:40 AM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#94b722;margin-right:4px;vertical-align:middle'></span>35m</td><td>£266 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Fri 21 Aug</td><td>7:25 PM</td><td>7:05 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#55be37;margin-right:4px;vertical-align:middle'></span>20m</td><td>£278 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sat 22 Aug</td><td>5:10 PM</td><td>3:45 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#ed6300;margin-right:4px;vertical-align:middle'></span>1h 25m</td><td>£528 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr><tr><td>Sun 23 Aug</td><td>11:35 AM</td><td>12:20 PM</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#bfb214;margin-right:4px;vertical-align:middle'></span>45m</td><td>£461 <span style='color:#27ae60;font-size:0.68rem'>today</span></td></tr></tbody></table></div>`, {maxWidth: 420})
+  .bindTooltip("🛫 PSA · departure 10m", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.circleMarker([51.477, -0.461], {
+    radius:      7,
+    fillColor:   "#555",
+    color:       "#888",
+    weight:      2,
+    opacity:     0.7,
+    fillOpacity: 0.7
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>LHR</div><div class='popup-sub'>Both · no shared connection</div><div style='padding:6px 0;font-size:0.82rem;color:#555;'>Only <b>Charlie</b> has direct flights here.<br>404 direct flight(s) in store.</div></div>`, {maxWidth: 320})
+  .bindTooltip("✈ LHR · Charlie only", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.circleMarker([51.157, -0.182], {
+    radius:      7,
+    fillColor:   "#555",
+    color:       "#888",
+    weight:      2,
+    opacity:     0.7,
+    fillOpacity: 0.7
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>LGW</div><div class='popup-sub'>Both · no shared connection</div><div style='padding:6px 0;font-size:0.82rem;color:#555;'>Only <b>Charlie</b> has direct flights here.<br>351 direct flight(s) in store.</div></div>`, {maxWidth: 320})
+  .bindTooltip("✈ LGW · Charlie only", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.circleMarker([53.354, -2.275], {
+    radius:      7,
+    fillColor:   "#555",
+    color:       "#888",
+    weight:      2,
+    opacity:     0.7,
+    fillOpacity: 0.7
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>MAN</div><div class='popup-sub'>Both · no shared connection</div><div style='padding:6px 0;font-size:0.82rem;color:#555;'>Only <b>Mike</b> has direct flights here.<br>123 direct flight(s) in store.</div></div>`, {maxWidth: 320})
+  .bindTooltip("✈ MAN · Mike only", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.circleMarker([53.334, -2.85], {
+    radius:      7,
+    fillColor:   "#555",
+    color:       "#888",
+    weight:      2,
+    opacity:     0.7,
+    fillOpacity: 0.7
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>LPL</div><div class='popup-sub'>Both · no shared connection</div><div style='padding:6px 0;font-size:0.82rem;color:#555;'>Only <b>Mike</b> has direct flights here.<br>21 direct flight(s) in store.</div></div>`, {maxWidth: 320})
+  .bindTooltip("✈ LPL · Mike only", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.circleMarker([43.469, -1.523], {
+    radius:      7,
+    fillColor:   "#555",
+    color:       "#888",
+    weight:      2,
+    opacity:     0.7,
+    fillOpacity: 0.7
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>BIQ</div><div class='popup-sub'>Outbound · no shared connection</div><div style='padding:6px 0;font-size:0.82rem;color:#555;'>Only <b>Charlie</b> has direct flights here.<br>16 direct flight(s) in store.</div></div>`, {maxWidth: 320})
+  .bindTooltip("✈ BIQ · Charlie only", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.circleMarker([51.885, 0.235], {
+    radius:      7,
+    fillColor:   "#555",
+    color:       "#888",
+    weight:      2,
+    opacity:     0.7,
+    fillOpacity: 0.7
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>STN</div><div class='popup-sub'>Both · no shared connection</div><div style='padding:6px 0;font-size:0.82rem;color:#555;'>Only <b>Charlie</b> has direct flights here.<br>91 direct flight(s) in store.</div></div>`, {maxWidth: 320})
+  .bindTooltip("✈ STN · Charlie only", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.circleMarker([51.382, -2.719], {
+    radius:      7,
+    fillColor:   "#555",
+    color:       "#888",
+    weight:      2,
+    opacity:     0.7,
+    fillOpacity: 0.7
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>BRS</div><div class='popup-sub'>Both · no shared connection</div><div style='padding:6px 0;font-size:0.82rem;color:#555;'>Only <b>Charlie</b> has direct flights here.<br>32 direct flight(s) in store.</div></div>`, {maxWidth: 320})
+  .bindTooltip("✈ BRS · Charlie only", {permanent: false, direction: "top"})
+  .addTo(map);
+
+  L.marker([43.81, 11.202], {
+    icon: L.divIcon({
+      className: "",
+      html: `<div style="
+        width:14px; height:14px;
+        background:#555;
+        border:2px solid #888;
+        border-radius:2px;
+        opacity:0.7;
+      "></div>`,
+      iconSize:   [14, 14],
+      iconAnchor: [7, 7]
+    })
+  })
+  .bindPopup(`<div class='popup'><div class='popup-header'>FLR</div><div class='popup-sub'>Inbound · no shared connection</div><div style='padding:6px 0;font-size:0.82rem;color:#555;'>Only <b>Charlie</b> has direct flights here.<br>31 direct flight(s) in store.</div></div>`, {maxWidth: 320})
+  .bindTooltip("🛫 FLR · Charlie only", {permanent: false, direction: "top"})
+  .addTo(map);
+</script>
+</body>
+</html>

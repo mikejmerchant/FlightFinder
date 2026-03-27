@@ -1,271 +1,104 @@
 # ✈️ AI Flight Finder Suite
 
-> **Find the cheapest flights, in plain English.**
+> **Find the cheapest flights for groups, in plain English.**
 > Powered by [Claude AI](https://anthropic.com) + live Google Flights scraping.
 
 ---
 
 ## What Is This?
 
-A suite of three Python command-line tools that let you search for flights exactly how you'd describe them to a friend. No dropdowns, no date pickers — just type what you want.
+A suite of Python command-line tools that let you search for flights exactly how you'd describe them to a travel agent — no forms, no dropdowns, no fiddling with dates. Claude interprets your request, Playwright scrapes live Google Flights prices, and the results are ranked by a combination of cost and synchronisation quality.
 
-```bash
-python FlightFinderFriends.py "Charlie lives in Exeter and I live in Manchester.
-  We want to fly to the Genoa region in late June for a 7-day cycling holiday,
-  then fly home from somewhere in southern Italy."
-```
-
-Claude interprets your query → a real browser scrapes Google Flights live → results are ranked, summarised by AI, and optionally exported to a beautiful PDF.
+Built for **group travel** where people fly from different cities and need to arrive (and leave) at roughly the same time.
 
 ---
 
-## The Three Tools
+## Tools
 
-| Tool | Best For |
-|------|----------|
-| `flight_finder.py` | Solo or return travel from one city |
-| `FlightFinderAdvanced.py` | Open-jaw trips — fly into one city, back from another |
-| `FlightFinderFriends.py` | **Groups flying from different home cities to meet up**, minimising arrival time gaps |
-
----
-
-## How It Works
-
-```
-Your plain-English query
-        │
-        ▼
-  🤖  Claude (claude-sonnet)
-      ├─ Identifies travellers & home airports
-      ├─ Expands vague destinations → nearby IATA codes
-      ├─ Parses flexible dates ("late June", "7 days later")
-      ├─ Infers cabin class, passengers, budget
-      └─ Returns structured search parameters
-        │
-        ▼
-  🌐  Playwright (headless Chromium)
-      └─ Scrapes Google Flights live — real prices, right now
-        │
-        ▼
-  📊  Scoring & Ranking
-      ├─ Ranked by price (+ stop penalty)
-      ├─ Friends mode: scored on cost + arrival/departure sync
-      └─ AI summary: patterns, cheapest days, honest caveats
-        │
-        ▼
-  📄  Optional PDF Export
-      └─ Print-ready report for sharing via email or WhatsApp
-```
-
----
-
-## Demo Output
-
-```
-╔══════════════════════════════════════════════════════════════╗
-║   ✈️   Flight Finder Friends  •  Group trip optimiser         ║
-╚══════════════════════════════════════════════════════════════╝
-
-📋  Claude's interpretation:
-    👤 Mike          home airports: MAN, LPL
-    👤 Charlie       home airports: EXT, EXM
-    🛬 Shared destinations  : GOA, NCE, MXP
-    🛫 Shared return origins: PMO, BRI, CTA, AHO, CAG
-    📅 Outbound: 2026-06-26   Return: 2026-07-03
-
-══════════════════════════════════════════════════════════════════
-  #1  💰 TOTAL GBP 253  (GBP 126/person)
-       🕐 Arrival gap: 45m gap   |   Departure gap: 30m gap
-       📊 Score: 262.5  (lower = better balance of cost & sync)
-
-  ── OUTBOUND  (→ NCE) ─────────────────────────────────────────
-
-      👤 Mike          ✈️  easyJet
-         MAN → NCE   📅 Fri 26 Jun 2026
-         🛫 06:30  →  🛬 09:45   ⏱ 3 hr 15 min   ✈ Direct
-         💰 GBP 67
-
-      👤 Charlie       ✈️  Flybe
-         EXT → NCE   📅 Fri 26 Jun 2026
-         🛫 07:15  →  🛬 10:30   ⏱ 3 hr 15 min   ✈ Direct
-         💰 GBP 89
-
-════════════════════════════════════════════════════════════════
-  🤖  AI TRAVEL SUMMARY
-
-  The best-value combination for Mike and Charlie is trip #1,
-  totalling £253 (£126.50/person). Both fly into Nice (NCE) on
-  26 June — Mike direct from Manchester with easyJet at £67,
-  and Charlie direct from Exeter at £89. The 45-minute arrival
-  gap is very manageable. Charlie's Exeter options are
-  consistently £15-25 more expensive than Mike's Manchester
-  flights. Flying back on 4 July saves ~£20 if your itinerary
-  allows an extra day.
-```
-
----
-
-## Installation
-
-### 1. Install Python dependencies
+### `FlightFinderFriends.py` — Group travel optimiser
+The main tool. Friends flying from different home cities to a shared destination.
 
 ```bash
-pip install -r requirements.txt
-playwright install chromium
+python FlightFinderFriends.py "Charlie from Exeter and Mike from Manchester want to fly
+to Nice on 10 Aug, return from Rome on 17 Aug. Direct flights only. Sociable hours."
 ```
 
-### 2. Get an Anthropic API key
+Finds every combination of direct flights, scores them by total cost + arrival/departure sync gap + time-of-day preferences, and ranks them. Outputs a full trip breakdown with booking links, optional PDF, and an AI prose summary.
 
-Create a free account at [console.anthropic.com](https://console.anthropic.com) and generate an API key.
+**Key features:**
+- Natural language query interpretation via Claude
+- Live Google Flights scraping (real prices, not cached)
+- Sync scoring — configurable penalty per hour of arrival/departure gap
+- Direct flights prioritised in search and scoring
+- Time-of-day penalties — "sociable hours", "avoid before 7am", "no airport hotel"
+- Feasibility check before full search — detects impossible routes early
+- Resume/checkpoint — interrupted searches can be continued
+- Persistent search store — results saved to `~/.flightfinder/searches/`
+- Bike fee lookup with `--bike` flag (or auto-detected from query)
+- PDF export with `--pdf`
 
-### 3. Set your API key
+### `FlightFinderConnections.py` — Hub airport map
+Reads your saved searches and produces an interactive map showing which airports work as hubs — places where all travellers can arrive (or depart) on direct flights with good time sync.
 
 ```bash
-# macOS / Linux — add to your ~/.zshrc or ~/.bashrc:
-export ANTHROPIC_API_KEY="sk-ant-your-key-here"
-
-# Windows (PowerShell):
-$env:ANTHROPIC_API_KEY = "sk-ant-your-key-here"
+python FlightFinderConnections.py --travellers Mike Charlie --open
 ```
 
-### 4. Run!
+**Map legend:**
+- 🟢 Circle = outbound hub (arrival sync) — green is tight, red is poor
+- 🟧 Square = inbound hub (departure sync)
+- ⬜ Grey = solo airport (only one traveller has direct flights — ruled out)
+
+Click any pin for a per-date breakdown of best pairings. Stale data (>7 days old) is flagged with a warning banner.
 
 ```bash
-python flight_finder.py "Manchester to Barcelona in July, return after a week"
+# Diagnose why an airport appears or doesn't:
+python FlightFinderConnections.py --debug-airport FCO
 ```
 
----
-
-## Usage
-
-### `flight_finder.py` — Standard search
+### `reanalyse.py` — Re-sort without re-scraping
+Re-filter and re-rank a saved search using plain English, without hitting Google Flights again.
 
 ```bash
-# Simple return trip
-python flight_finder.py "Fly from Manchester to Barcelona, return after a week in July"
-
-# Flexible dates — Claude searches ±days
-python flight_finder.py "Cheapest flight from London to Tokyo any time in March"
-
-# Business class with budget cap
-python flight_finder.py "NYC to Singapore business class under £2000 in June"
-
-# Save results as a PDF
-python flight_finder.py "Edinburgh to Rome in August" --pdf my_trip.pdf
-
-# Interactive mode
-python flight_finder.py --interactive
+python FlightFinderFriends.py --reanalyse search_011 "show only direct flights under £600, sociable hours"
+python FlightFinderFriends.py --reanalyse search_011 "Charlie returns via LGW"
+python FlightFinderFriends.py --list-searches
 ```
+
+Supports: sort by price/sync/score, direct-only, price range, per-traveller airport filters, arrival/departure spread limits, and time-of-day preferences.
 
 ### `FlightFinderAdvanced.py` — Open-jaw trips
+Fly into one city, return from another (e.g. start in Nice, end in Rome after a cycling trip).
 
 ```bash
-# Fly into one city, back from another
-python FlightFinderAdvanced.py "Fly from Manchester to Nice on 26th June,
-  return 7 days later from Rome. No flexibility."
-
-# Vague end destination — Claude uses geography
-python FlightFinderAdvanced.py "London to Lisbon in July, cycling back,
-  fly home from somewhere on the Spanish coast 10 days later"
-
-# With PDF export
-python FlightFinderAdvanced.py "MAN to NCE 26 June, return from Rome 3 July" \
-  --pdf italy_trip.pdf
+python FlightFinderAdvanced.py "Fly from London to Nice on 10 Aug, return from Rome on 17 Aug"
 ```
 
-### `FlightFinderFriends.py` — Group travel
+### `flight_finder.py` — Single traveller
+Standard one-way or return search for one person.
 
 ```bash
-# Two people, different home cities, open-jaw cycling trip
-python FlightFinderFriends.py "Charlie lives in Exeter and I (Mike) live in
-  Manchester. We want to fly to the Genoa region in late June for a 7-day
-  cycling holiday, then fly home from southern Italy." --pdf cycling_june.pdf
-
-# Three people meeting in one city
-python FlightFinderFriends.py "Alice in London, Bob in Edinburgh, Carol in
-  Bristol — we all want to meet in Barcelona for a long weekend in July,
-  flying home Sunday evening"
-
-# Prioritise sync over cost
-python FlightFinderFriends.py "Tom (Glasgow) and Sarah (Bristol) want to fly
-  to Lisbon in August — really minimise the arrival time gap"
+python flight_finder.py "Cheapest flights from Manchester to Barcelona in September"
 ```
 
 ---
 
-## All Options
-
-```
--i, --interactive      Prompt for query interactively
--n, --top N            Show top N results (default: 10)
---pdf [FILENAME]       Export to PDF (optional custom filename)
---debug                Save raw HTML, open browser visibly
---api-key KEY          Pass API key directly
-```
-
----
-
-## What Claude Understands
-
-| You say | Claude does |
-|---------|-------------|
-| `"near Manchester"` | Adds MAN, LPL |
-| `"London airports"` | Adds LHR, LGW, STN, LTN, LCY |
-| `"Genoa region"` | Adds GOA, NCE, MXP |
-| `"late June"` | Picks a date in the last week of June |
-| `"7 days later"` | Calculates return date automatically |
-| `"cheapest time in March"` | Sets flexible_days: 7 |
-| `"no flexibility"` | Sets flexible_days: 0 |
-| `"business class"` | Sets cabin: business |
-| `"under £300"` | Sets max_price: 300 |
-| `"2 passengers"` | Sets passengers: 2 |
-| `"minimise the time gap"` | Raises sync penalty in Friends mode |
-| `"cost is the priority"` | Lowers sync penalty in Friends mode |
-
----
-
-## The Sync Score (Friends Mode)
-
-The Friends tool scores group trips on **cost + synchronisation**:
-
-```
-Score = total cost
-      + (arrival gap in hours  × penalty per hour)
-      + (departure gap in hours × penalty per hour)
-```
-
-The penalty defaults to **£10/hour**. Say *"really minimise the gap"* to raise it to ~£25/hr, or *"cheapest above all"* to drop it to ~£3/hr.
-
----
-
-## PDF Export
-
-Add `--pdf` to any command to generate a print-ready PDF:
-
-- Navy header with your search query (word-wrapped, never cramped)
-- AI prose summary at the top
-- Flight cards with airline, route, times, stops badge, and price
-- Clickable Google Flights booking links on every card
-- Traveller colour-coding and sync gap badges (Friends mode)
-- Page numbers and footer on every page
+## Install
 
 ```bash
-python FlightFinderFriends.py "..." --pdf results.pdf
-```
+# 1. Clone
+git clone https://github.com/YOUR_USERNAME/ai-flight-finder.git
+cd ai-flight-finder
 
----
+# 2. Install Python dependencies
+pip install -r requirements.txt
 
-## Project Structure
+# 3. Install the Playwright browser
+playwright install chromium
 
-```
-flight_finder/
-├── flight_finder.py          # Standard single-origin search
-├── FlightFinderAdvanced.py   # Open-jaw trip search
-├── FlightFinderFriends.py    # Group travel optimiser
-├── pdf_export.py             # Shared PDF generation module
-├── requirements.txt          # Python dependencies
-├── LICENSE                   # MIT
-└── README.md                 # This file
+# 4. Set your Anthropic API key
+export ANTHROPIC_API_KEY="sk-ant-..."
+# Or pass it per-run: --api-key sk-ant-...
 ```
 
 ---
@@ -277,28 +110,86 @@ flight_finder/
 | `anthropic` | Claude API — query interpretation & AI summaries |
 | `playwright` | Headless browser for live Google Flights scraping |
 | `rich` | Progress bar & styled terminal output |
-| `reportlab` | PDF generation (`--pdf` flag) |
+| `reportlab` | PDF export |
 
-Python 3.10+ required.
+Python 3.10+ required (uses `match` statements and `|` union types).
 
 ---
 
-## Notes & Caveats
+## CLI Flags — FlightFinderFriends
 
-- **Prices are live** — scraped from Google Flights in real time, not cached or AI-generated
-- **Each search opens a real browser** — searches take 1–2 minutes per combination; Friends mode with multiple travellers can take longer, this is expected
-- **Google occasionally changes their page structure** — if results look wrong, try `--debug` to inspect the raw HTML
-- **No route = no results** — if Google Flights has no flights for a route, the tool logs it and skips it cleanly rather than returning bad data
-- **Be respectful** — the tools include polite delays between requests; please don't remove them
+| Flag | Description |
+|------|-------------|
+| `--api-key KEY` | Anthropic API key (or set `ANTHROPIC_API_KEY`) |
+| `--bike` | Look up bicycle transport fees per airline |
+| `--pdf [FILE]` | Export results to PDF |
+| `--debug` | Save HTML snapshots; show browser window |
+| `--top N` | Show top N results (default: 5) |
+| `--max-age DAYS` | Re-scrape if cached result is older than N days (default: 7) |
+| `--no-resume` | Ignore checkpoint, start fresh |
+| `--no-feasibility` | Skip feasibility check |
+| `--reanalyse REF [INSTRUCTION]` | Re-analyse a saved search |
+| `--list-searches` | List all saved searches and exit |
+| `--yes` / `-y` | Auto-confirm prompts |
+| `--interactive` / `-i` | Prompt for query interactively |
+
+---
+
+## How Scoring Works
+
+```
+Score = ticket prices
+      + (arrival spread hours  × sync_penalty_per_hour)   ← outbound
+      + (departure spread hours × sync_penalty_per_hour)  ← inbound
+      + (stops per leg × £50)                              ← prefer direct
+      + time-of-day penalties per leg per traveller        ← sociable hours
+```
+
+`sync_penalty_per_hour` defaults to £10/hr and is tunable from the query:
+- "minimise time gaps" → £25/hr
+- "cheapest above all" → £3/hr
+
+Time-of-day penalties default to £40 (warn) / £80 (bad) per leg and are only active when the query mentions time preferences.
+
+---
+
+## File Structure
+
+```
+├── FlightFinderFriends.py     # Group travel optimiser — main tool
+├── FlightFinderConnections.py # Hub airport map from saved searches
+├── FlightFinderAdvanced.py    # Open-jaw trip search
+├── flight_finder.py           # Single traveller search
+├── reanalyse.py               # Re-filter saved searches without re-scraping
+├── search_store.py            # Persistent search result database
+├── time_preferences.py        # Shared time-of-day scoring module
+├── pdf_export.py              # Shared PDF generation
+├── bike_fees.py               # Airline bicycle fee lookup
+├── requirements.txt           # Python dependencies
+├── LICENSE                    # MIT
+└── README.md                  # This file
+```
+
+Saved searches are stored in `~/.flightfinder/searches/` as JSON files.
+
+---
+
+## Notes
+
+- **Scraping etiquette** — the tools include polite delays between requests; please don't remove them
+- **Prices change** — results reflect what Google Flights shows at scrape time; always verify before booking
+- **Direct flights** — use "direct flights only" in your query; the feasibility check will warn you if none exist
+- **API key security** — never hardcode your key; use the environment variable or `--api-key` flag
 
 ---
 
 ## Contributing
 
-Pull requests welcome! Areas that would particularly benefit:
+Pull requests welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+Areas that would benefit from contributions:
 - Support for additional currencies
-- Caching layer to avoid re-scraping identical routes
+- More airline bike fee data in `bike_fees.py`
 - Multi-city itineraries (more than two legs)
 - GUI or web interface
 
@@ -306,7 +197,7 @@ Pull requests welcome! Areas that would particularly benefit:
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE). Use freely, modify freely, share freely.
+MIT — see [LICENSE](LICENSE)
 
 ---
 

@@ -1,8 +1,8 @@
 # AI Flight Finder Suite — Python dependencies
 # Install with: pip install -r requirements.txt
-# Then run:     playwright install chromium
+# Then: playwright install chromium
 
 anthropic>=0.25.0       # Claude API — query interpretation & AI summaries
-playwright>=1.40.0      # Headless browser for live Google Flights scraping
+playwright>=1.40.0      # Headless Chromium for live Google Flights scraping
 rich>=13.0.0            # Progress bar & styled terminal output
-reportlab>=4.0.0        # PDF generation (required for --pdf flag)
+reportlab>=4.0.0        # PDF export (optional — only needed for --pdf flag)
