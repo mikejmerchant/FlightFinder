@@ -1288,6 +1288,143 @@ class LiveSummary:
         return valid_count, cheapest
 
 
+# ── Search scope estimator ───────────────────────────────────────────────────
+
+SCOPE_WARN_THRESHOLD = 40   # scrape requests before warning the user
+
+def _estimate_search_scope(params: FriendsSearchParams) -> dict:
+    """
+    Estimate the number of scrape requests that will be made.
+    Mirrors the task-list logic in run_all_searches exactly.
+    """
+    max_out_flex = max(t.outbound_flexible for t in params.travellers)
+    out_dates    = 2 * max_out_flex + 1
+
+    if params.trip_length_min > 0:
+        trip_max     = max(params.trip_length_max, params.trip_length_min)
+        trip_variants = trip_max - params.trip_length_min + 1
+        # unique inbound dates = window of out_dates + duration spread
+        inb_dates = out_dates + trip_variants - 1
+    else:
+        max_inb_flex  = max(t.inbound_flexible for t in params.travellers)
+        trip_variants = 1
+        inb_dates     = 2 * max_inb_flex + 1
+
+    total_airports = sum(len(t.home_airports) for t in params.travellers)
+    n_dest         = len(params.shared_destinations)
+    n_orig         = len(params.shared_inbound_origins)
+
+    out_scrapes = total_airports * n_dest * out_dates
+    inb_scrapes = total_airports * n_orig * inb_dates if not params.one_way else 0
+    total       = out_scrapes + inb_scrapes
+
+    return {
+        "out_dates":       out_dates,
+        "inb_dates":       inb_dates,
+        "trip_variants":   trip_variants,
+        "total_airports":  total_airports,
+        "n_dest":          n_dest,
+        "n_orig":          n_orig,
+        "out_scrapes":     out_scrapes,
+        "inb_scrapes":     inb_scrapes,
+        "total_scrapes":   total,
+        "est_seconds":     total * 2,    # ~2s per scrape with overhead
+    }
+
+
+def _warn_search_scope(params: FriendsSearchParams, args) -> bool:
+    """
+    Warn the user if the search is large. Print a breakdown, suggest revisions,
+    and prompt for confirmation. Returns True to proceed, False to abort.
+    Skips the prompt when --yes / non-interactive.
+    """
+    s = _estimate_search_scope(params)
+    if s["total_scrapes"] <= SCOPE_WARN_THRESHOLD:
+        return True
+
+    mins, secs = divmod(s["est_seconds"], 60)
+    time_str   = f"~{mins}m {secs}s" if mins else f"~{secs}s"
+
+    print(f"\n  ⚠️   LARGE SEARCH SCOPE  —  {s['total_scrapes']} requests  ({time_str} estimate)")
+    print(f"  {'─'*60}")
+    print(f"  Outbound date window : {s['out_dates']} date(s)")
+    if params.trip_length_min > 0:
+        trip_max = max(params.trip_length_max, params.trip_length_min)
+        print(f"  Trip length variants : {s['trip_variants']}  "
+              f"({params.trip_length_min}–{trip_max} days)")
+    print(f"  Return date window   : {s['inb_dates']} date(s)")
+    print(f"  Airport options      : {s['total_airports']} home airport(s) across "
+          f"{len(params.travellers)} traveller(s)")
+    print(f"  Destination options  : {s['n_dest']} outbound, {s['n_orig']} inbound")
+    print()
+
+    # Build concrete revision suggestions with scope impact
+    suggestions = []
+    if params.trip_length_min > 0 and params.trip_length_min != params.trip_length_max:
+        trip_max = max(params.trip_length_max, params.trip_length_min)
+        fixed    = _estimate_search_scope(
+            _params_with(params, trip_length_min=trip_max, trip_length_max=trip_max)
+        )
+        delta = s["total_scrapes"] - fixed["total_scrapes"]
+        suggestions.append(
+            (f"fix the trip to exactly {trip_max} days  "
+             f"(saves ~{delta} requests)",
+             f"say 'exactly {trip_max} days' instead of '{params.trip_length_min}–{trip_max} days'")
+        )
+    max_flex = max(t.outbound_flexible for t in params.travellers)
+    if max_flex > 2:
+        reduced = _estimate_search_scope(_params_with(params, out_flex=2))
+        delta   = s["total_scrapes"] - reduced["total_scrapes"]
+        suggestions.append(
+            (f"reduce date flexibility from ±{max_flex} to ±2 days  "
+             f"(saves ~{delta} requests)",
+             f"say '2 days flexibility' or 'around {params.outbound_date}'")
+        )
+    avg_airports = s["total_airports"] / len(params.travellers)
+    if avg_airports > 2:
+        suggestions.append(
+            (f"name home airports explicitly (Claude picked ~{avg_airports:.0f} per traveller)",
+             "add 'from BRS only' / 'from MAN only' to the query")
+        )
+
+    if suggestions:
+        print(f"  💡  To reduce scope, consider:")
+        for hint, example in suggestions:
+            print(f"      • {hint}")
+            print(f"        e.g. {example}")
+        print()
+
+    if getattr(args, 'yes', False) or not sys.stdin.isatty():
+        print(f"  ▶️   Proceeding with full search (--yes).\n")
+        return True
+
+    print(f"  Continue anyway? [Y/n]: ", end="", flush=True)
+    answer = input().strip().lower()
+    print()
+    return answer in ("", "y", "yes")
+
+
+def _params_with(params: FriendsSearchParams,
+                 trip_length_min: int | None = None,
+                 trip_length_max: int | None = None,
+                 out_flex: int | None = None) -> FriendsSearchParams:
+    """Return a shallow copy of params with selected fields overridden."""
+    import copy
+    p = copy.copy(params)
+    if trip_length_min is not None:
+        object.__setattr__(p, "trip_length_min", trip_length_min)
+    if trip_length_max is not None:
+        object.__setattr__(p, "trip_length_max", trip_length_max)
+    if out_flex is not None:
+        new_travellers = [
+            TravellerSpec(name=t.name, home_airports=t.home_airports,
+                          outbound_flexible=out_flex, inbound_flexible=t.inbound_flexible)
+            for t in params.travellers
+        ]
+        object.__setattr__(p, "travellers", new_travellers)
+    return p
+
+
 # ── Main search orchestrator ──────────────────────────────────────────────────
 
 def run_all_searches(params: FriendsSearchParams,
@@ -2004,7 +2141,7 @@ def summarise_with_claude(query: str, results_digest: list, api_key: str,
 # ─────────────────────────────────────────────
 
 def main():
-	load_config()  # call this early in each script
+    load_config()
     parser = argparse.ArgumentParser(
         description="✈️  AI group flight optimiser — friends from different cities",
         formatter_class=argparse.RawTextHelpFormatter,
@@ -2148,6 +2285,10 @@ def main():
         print("❌  Claude couldn't determine return origin airports.")
         print("    If this is a one-way trip, say 'one-way' explicitly in your query.")
         sys.exit(1)
+
+    # Step 1b: Warn if search scope is large before any scraping begins
+    if not _warn_search_scope(params, args):
+        sys.exit(0)
 
     # Step 2: Feasibility check (sample search before committing to full run)
     if not getattr(args, 'no_feasibility', False):
