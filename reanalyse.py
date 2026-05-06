@@ -345,7 +345,8 @@ def _build_summary(trips_digest: list, indices: list, spec: FilterSpec) -> str:
     best_dest  = out_legs[0].get("destination","?") if out_legs else "?"
     best_orig  = inb_legs[0].get("origin","?")      if inb_legs else "?"
 
-    travellers = sorted({leg.get("traveller","") for leg in out_legs + inb_legs if leg.get("traveller")})
+    travellers = sorted({leg.get("traveller","") for leg in out_legs + inb_legs if leg.get("traveller")},
+                        key=lambda n: (n.lower() != "mike", n.lower()))
     trav_str   = " and ".join(travellers) if travellers else "travellers"
 
     parts = [f"Found {len(indices)} trip{'s' if len(indices)!=1 else ''} matching: {spec.description}."]
@@ -458,12 +459,12 @@ def _display_reanalysis_trips(trips_digest: list, indices: list):
         if idx >= len(trips_digest): continue
         t = trips_digest[idx]
 
-        total    = t.get("total_price_gbp", 0)
         score    = t.get("score", 0)
         arr_mins = t.get("arrival_spread_mins", -1)
         dep_mins = t.get("departure_spread_mins", -1)
         out_legs = t.get("outbound_legs", [])
         inb_legs = t.get("inbound_legs",  [])
+        total    = sum(leg.get("price_gbp", 0) for leg in out_legs + inb_legs)
         n_legs   = len(out_legs) or 1
         per_p    = total / n_legs
         is_ow    = not inb_legs
@@ -514,12 +515,16 @@ def _print_leg(leg: dict, role: str = ""):
     else:
         time_line = f"🛫 {depart}  →  🛬 {arrive}"
 
+    booking_url = (f"https://www.google.com/travel/flights?"
+                   f"q=flights+from+{orig}+to+{dest}+on+{date}&curr=GBP&hl=en")
+
     indent = "      "
     print(
         f"\n{indent}👤 {name:<12}{airline_str}\n"
         f"{indent}   {orig} → {dest}   📅 {date}\n"
         f"{indent}   {time_line}   ⏱ {travel}   {stops_label}\n"
-        f"{indent}   💰 GBP {price:.0f}"
+        f"{indent}   💰 GBP {price:.0f}\n"
+        f"{indent}   🔗 {booking_url}"
     )
 
 
