@@ -2347,7 +2347,14 @@ def main():
     # Step 6: Display
     if getattr(args, 'by_date', False):
         display_trips_by_date(trips)
-    display_trips(trips, top_n=args.top, show_bike=show_bike)
+        trips_for_display = sorted(
+            trips,
+            key=lambda t: min(leg.depart_date for leg in t.outbound_legs)
+                          if t.outbound_legs else ""
+        )
+    else:
+        trips_for_display = trips
+    display_trips(trips_for_display, top_n=args.top, show_bike=show_bike)
 
     if trips:
         summarise_with_claude(query, _trips_to_digest(trips), args.api_key)
