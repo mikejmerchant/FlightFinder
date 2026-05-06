@@ -57,6 +57,22 @@ except ImportError:
     PDF_AVAILABLE = False
 
 
+
+
+import os
+from pathlib import Path
+
+def load_config():
+    config_path = Path.home() / ".flightfinder" / "config"
+    if config_path.exists():
+        for line in config_path.read_text().splitlines():
+            if "=" in line and not line.startswith("#"):
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip())
+
+
+
+
 # ─────────────────────────────────────────────
 # Data models
 # ─────────────────────────────────────────────
@@ -1781,6 +1797,71 @@ def build_and_rank_trips(search_results, params, max_combinations=50_000):
 
 
 
+def display_trips_by_date(trips: list[GroupTrip]) -> None:
+    """
+    One-row-per-departure-date summary table.
+    For each unique outbound date, shows the best-scored trip (trips must be
+    pre-sorted by score ascending). A Days column handles variable trip lengths.
+    Marks cheapest total (💰) and best score (⭐) separately when they differ.
+    """
+    by_date: dict[str, GroupTrip] = {}
+    for trip in trips:          # already sorted best-score-first
+        if not trip.outbound_legs:
+            continue
+        date = min(leg.depart_date for leg in trip.outbound_legs)
+        if date not in by_date:
+            by_date[date] = trip
+
+    if not by_date:
+        return
+
+    rows = sorted(by_date.items())          # chronological
+    cheapest_date   = min(rows, key=lambda x: x[1].total_cost)[0]
+    best_score_date = min(rows, key=lambda x: x[1].score)[0]
+
+    print(f"\n  {'═'*68}")
+    print(f"  📅  BEST TRIP PER DEPARTURE DATE  ({len(rows)} departure dates found)")
+    print(f"  {'═'*68}")
+    print(f"  {'Depart':<12}  {'Return':<12}  {'Days':>4}  {'Total':>6}  {'Per person':>10}  {'Arr gap':<12}  Score")
+    print(f"  {'─'*66}")
+
+    for date, trip in rows:
+        n_p      = len(trip.outbound_legs) or 1
+        per_p    = trip.total_cost / n_p
+        arr      = trip._spread_label(trip.arrival_spread_mins)
+        ret_date = min(leg.depart_date for leg in trip.inbound_legs) if trip.inbound_legs else ""
+
+        try:
+            out_dt   = datetime.strptime(date,     "%Y-%m-%d")
+            d_label  = out_dt.strftime("%a %d %b")
+        except ValueError:
+            out_dt, d_label = None, date
+
+        try:
+            inb_dt  = datetime.strptime(ret_date, "%Y-%m-%d")
+            r_label = inb_dt.strftime("%a %d %b")
+        except ValueError:
+            inb_dt, r_label = None, (ret_date or "—")
+
+        days_label = (f"{(inb_dt - out_dt).days}d"
+                      if out_dt and inb_dt else "?")
+
+        flags = ""
+        if date == cheapest_date:
+            flags += "  💰"
+        if date == best_score_date and best_score_date != cheapest_date:
+            flags += "  ⭐"
+
+        print(f"  {d_label:<12}  {r_label:<12}  {days_label:>4}  "
+              f"£{trip.total_cost:>4.0f}  £{per_p:>8.0f}  {arr:<12}  {trip.score:>6.1f}{flags}")
+
+    print()
+    legend_parts = ["💰 = cheapest total price"]
+    if best_score_date != cheapest_date:
+        legend_parts.append("⭐ = best score (cost + sync)")
+    print(f"  {' | '.join(legend_parts)}\n")
+
+
 def display_trips(trips: list[GroupTrip], top_n: int = 10, show_bike: bool = False):
     if not trips:
         print("\n❌  No group trip combinations found.")
@@ -1923,6 +2004,7 @@ def summarise_with_claude(query: str, results_digest: list, api_key: str,
 # ─────────────────────────────────────────────
 
 def main():
+	load_config()  # call this early in each script
     parser = argparse.ArgumentParser(
         description="✈️  AI group flight optimiser — friends from different cities",
         formatter_class=argparse.RawTextHelpFormatter,
@@ -1961,6 +2043,10 @@ def main():
                         help="List all saved searches and exit")
     parser.add_argument("--yes", "-y", action="store_true",
                         help="Auto-confirm prompts (e.g. run new search after reanalysis)")
+    parser.add_argument(
+        "--by-date", action="store_true",
+        help="Show a one-row-per-departure-date summary table before the full results",
+    )
     parser.add_argument(
         "--bike", action="store_true",
         help="Look up live bicycle transport fees for each airline found",
@@ -2118,6 +2204,8 @@ def main():
         attach_bike_fees(all_flights, bike_cache)
 
     # Step 6: Display
+    if getattr(args, 'by_date', False):
+        display_trips_by_date(trips)
     display_trips(trips, top_n=args.top, show_bike=show_bike)
 
     if trips:
