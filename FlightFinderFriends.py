@@ -216,7 +216,7 @@ class TravellerSpec:
     name:              str
     home_airports:     list[str]   # IATA — traveller's origin/return airports
     outbound_flexible: int = 0     # ±days on outbound date
-    inbound_flexible:  int = 0     # ±days on inbound date
+    inbound_flexible:  int = 0     # ±days on inbound date (ignored when trip_length_min set)
 
 
 @dataclass
@@ -258,6 +258,8 @@ class FriendsSearchParams:
     direct_only:            bool = False  # True if user requested no connecting flights
     # Penalty: how many £ is 1 hour of arrival/departure spread worth?
     sync_penalty_per_hour:  float = 10.0
+    trip_length_min:        int   = 0    # minimum trip duration in days (0 = not set)
+    trip_length_max:        int   = 0    # maximum trip duration in days (0 = same as min)
     reasoning:              str   = ""
     time_prefs:             "TimePrefs" = None  # type: ignore
 
@@ -306,6 +308,15 @@ Other rules:
   - For ONE-WAY trips: set shared_inbound_origins to [] and inbound_date to null
 - Parse the outbound date and inbound date (calculate "7 days later" etc.)
   - For ONE-WAY trips set inbound_date to null
+- trip_length_min / trip_length_max: if the user specifies a trip duration
+  AND date flexibility, set these to keep the trip length locked to the outbound
+  date rather than using an independent inbound date.
+  Examples:
+    "7 day trip" → trip_length_min: 7, trip_length_max: 7
+    "5, 6 or 7 days" → trip_length_min: 5, trip_length_max: 7
+    "about a week" → trip_length_min: 6, trip_length_max: 8
+    "at least 5 days, up to 10" → trip_length_min: 5, trip_length_max: 10
+  If no duration is mentioned, set both to 0 and use inbound_date normally.
 - Set one_way: true for one-way trips, false for return trips
 - Honour "no flexibility" or "exact airport only" instructions strictly
 - Set direct_only: true if the user says "direct only", "no stops", "non-stop", "nonstop", or any equivalent phrase meaning connecting flights are not acceptable
@@ -350,6 +361,8 @@ Output schema:
   "max_total_price": null,
   "one_way": false,
   "direct_only": false,
+  "trip_length_min": 0,
+  "trip_length_max": 0,
   "sync_penalty_per_hour": 10,
   "time_prefs": {
     "active": false,
@@ -425,6 +438,8 @@ def interpret_with_claude(user_query: str, api_key: str) -> FriendsSearchParams:
         max_total_price=data.get("max_total_price"),
         one_way=is_one_way,
         direct_only=bool(data.get("direct_only", False)),
+        trip_length_min=int(data.get("trip_length_min", 0) or 0),
+        trip_length_max=int(data.get("trip_length_max", 0) or 0),
         sync_penalty_per_hour=float(data.get("sync_penalty_per_hour", 10.0)),
         reasoning=data.get("reasoning", ""),
         time_prefs=_parse_time_prefs(data.get("time_prefs", {})),
@@ -440,6 +455,13 @@ def interpret_with_claude(user_query: str, api_key: str) -> FriendsSearchParams:
     else:
         print(f"    🛫 Shared return origins: {', '.join(params.shared_inbound_origins)}")
         print(f"    📅 Outbound: {params.outbound_date}   Return: {params.inbound_date}")
+    if params.trip_length_min > 0:
+        if params.trip_length_max > params.trip_length_min:
+            print(f"    📏  Trip length: {params.trip_length_min}–{params.trip_length_max} days "
+                  f"(inbound shifts with outbound across flexible dates)")
+        else:
+            print(f"    📏  Trip length: {params.trip_length_min} days fixed "
+                  f"(inbound shifts with outbound across flexible dates)")
     print(f"    🎚  Sync penalty: £{params.sync_penalty_per_hour:.0f}/hr of gap")
     if params.time_prefs and params.time_prefs.active:
         tp = params.time_prefs
@@ -802,10 +824,13 @@ def feasibility_check(params: FriendsSearchParams, api_key: str,
                 return hub
         return airports[0]  # fallback: nothing recognised, use first
 
-    # Pick the single best-bet route per traveller per leg:
-    # best home airport × best shared destination/origin × base date
-    best_dest   = _best_airport(params.shared_destinations)
-    best_origin = _best_airport(params.shared_inbound_origins) if params.shared_inbound_origins else None
+    # ── Outbound: probe best destination only (usually one or two airports) ────
+    best_dest = _best_airport(params.shared_destinations)
+
+    # ── Inbound: probe ALL candidate return origins, not just the best one.
+    # When a list of plausible return airports is given (e.g. southern France),
+    # checking only the top hub would miss viable options at less-connected airports.
+    inbound_origins_to_probe = params.shared_inbound_origins if not params.one_way else []
 
     sample_tasks = []
     for t in params.travellers:
@@ -816,16 +841,22 @@ def feasibility_check(params: FriendsSearchParams, api_key: str,
                 best_home, best_dest,
                 params.outbound_date,
             ))
-        if not params.one_way and params.shared_inbound_origins and t.home_airports:
+        for orig in inbound_origins_to_probe:
             sample_tasks.append((
                 "inbound", t.name,
-                best_origin, best_home,
+                orig, best_home,
                 params.inbound_date,
             ))
 
+    # Results keyed by (leg_type, traveller, origin)
     sample_results: dict[str, dict[str, list]] = {
         "outbound": {t.name: [] for t in params.travellers},
         "inbound":  {t.name: [] for t in params.travellers},
+    }
+    # Per-origin inbound results for reporting
+    inbound_by_origin: dict[str, dict[str, list]] = {
+        orig: {t.name: [] for t in params.travellers}
+        for orig in inbound_origins_to_probe
     }
 
     for leg_type, name, orig, dest, date in sample_tasks:
@@ -833,9 +864,34 @@ def feasibility_check(params: FriendsSearchParams, api_key: str,
         print(f"  🔎  [{label}] sample: {name}: {orig} → {dest} on {date}")
         flights = scrape_google_flights(name, orig, dest, date, debug=debug)
         sample_results[leg_type][name].extend(flights)
-        time.sleep(1.0)
+        if leg_type == "inbound":
+            inbound_by_origin[orig][name].extend(flights)
+        time.sleep(0.8)
 
-    # Assess: any traveller with zero results on their best-bet routes?
+    # ── Print inbound origin summary when multiple were probed ────────────────
+    if len(inbound_origins_to_probe) > 1:
+        print(f"\n  📊  Inbound origin summary ({params.inbound_date}):")
+        for orig in inbound_origins_to_probe:
+            by_t = inbound_by_origin[orig]
+            parts = []
+            for t in params.travellers:
+                flights_here = by_t[t.name]
+                direct = [f for f in flights_here if f.stops == "0"]
+                if direct:
+                    parts.append(f"{t.name} ✅ {len(direct)} direct")
+                elif flights_here:
+                    parts.append(f"{t.name} ⚠️ indirect only")
+                else:
+                    parts.append(f"{t.name} ❌ none")
+            all_have_direct = all(
+                any(f.stops == "0" for f in by_t[t.name])
+                for t in params.travellers
+            )
+            hub_flag = " 🌟 hub" if all_have_direct else ""
+            print(f"    {orig}{hub_flag}: {',  '.join(parts)}")
+        print()
+
+    # ── Assess failures ───────────────────────────────────────────────────────
     failures = []
     for t in params.travellers:
         best_home = _best_airport(t.home_airports)
@@ -847,9 +903,9 @@ def feasibility_check(params: FriendsSearchParams, api_key: str,
         if not params.one_way:
             inb_ok = len(sample_results["inbound"][t.name]) > 0
             if not inb_ok:
-                failures.append(f"{t.name}: no return flights found "
-                                f"({best_origin}→{best_home} "
-                                f"on {params.inbound_date})")
+                failures.append(f"{t.name}: no return flights found from any of "
+                                f"{', '.join(inbound_origins_to_probe)} "
+                                f"→ {best_home} on {params.inbound_date})")
 
     if not failures:
         total_sample = sum(
@@ -859,19 +915,29 @@ def feasibility_check(params: FriendsSearchParams, api_key: str,
         )
         # ── Direct-only check ────────────────────────────────────────────────
         if params.direct_only:
-            all_sample_flights = [
-                f for t in params.travellers
-                for f in (sample_results["outbound"][t.name] +
-                          sample_results["inbound"][t.name])
-            ]
-            direct_flights = [f for f in all_sample_flights if f.stops == "0"]
-            indirect_only  = all_sample_flights and not direct_flights
+            all_out = [f for t in params.travellers
+                       for f in sample_results["outbound"][t.name]]
+            all_inb = [f for t in params.travellers
+                       for f in sample_results["inbound"][t.name]]
+            all_sample_flights = all_out + all_inb
+            direct_out = [f for f in all_out if f.stops == "0"]
+            direct_inb = [f for f in all_inb if f.stops == "0"]
+            direct_flights = direct_out + direct_inb
+
+            # Identify which inbound origins have full direct coverage
+            viable_inbound = []
+            for orig in inbound_origins_to_probe:
+                by_t = inbound_by_origin.get(orig, {})
+                if all(any(f.stops == "0" for f in by_t.get(t.name, []))
+                       for t in params.travellers):
+                    viable_inbound.append(orig)
+
+            indirect_only = all_sample_flights and not direct_flights
 
             if indirect_only:
-                print(f"\n  ⚠️  Direct flights only was requested, but the sample "
-                      f"search found no direct flights on the best-bet routes.")
-                print(f"      ({len(all_sample_flights)} indirect flight(s) found on "
-                      f"sample routes.)")
+                print(f"\n  ⚠️  Direct flights only was requested, but no direct "
+                      f"flights were found on any sampled route.")
+                print(f"      ({len(all_sample_flights)} indirect flight(s) found.)")
                 print()
                 if sys.stdin.isatty():
                     print("  ❓  Continue anyway with indirect flights included? [y/N] ",
@@ -879,7 +945,6 @@ def feasibility_check(params: FriendsSearchParams, api_key: str,
                     answer = input().strip().lower()
                 else:
                     answer = "n"
-
                 if answer in ("y", "yes"):
                     import copy
                     params = copy.replace(params, direct_only=False)
@@ -890,9 +955,15 @@ def feasibility_check(params: FriendsSearchParams, api_key: str,
             elif direct_flights:
                 n_direct = len(direct_flights)
                 n_total  = len(all_sample_flights)
-                print(f"  ✅  Direct flights confirmed — "
-                      f"{n_direct}/{n_total} sample flights are direct. "
-                      f"Starting full search...\n")
+                if viable_inbound:
+                    print(f"  ✅  Direct flights confirmed — "
+                          f"{n_direct}/{n_total} sample flights are direct.")
+                    print(f"      Return origins with full direct coverage: "
+                          f"{', '.join(viable_inbound)}\n")
+                else:
+                    print(f"  ✅  Direct flights confirmed — "
+                          f"{n_direct}/{n_total} sample flights are direct. "
+                          f"Starting full search...\n")
                 return True, params
             # all_sample_flights empty → caught by failures above
 
@@ -1221,17 +1292,32 @@ def run_all_searches(params: FriendsSearchParams,
       results["inbound"][traveller_name]  = [FlightResult, ...]
     """
     # Build the full list of scrape tasks
+    # When trip_length_min is set, inbound dates are derived from each outbound
+    # date + each allowed duration, keeping the trip window coherent.
     tasks = []
     for t in params.travellers:
-        for date in generate_dates(params.outbound_date, t.outbound_flexible):
+        outbound_dates = generate_dates(params.outbound_date, t.outbound_flexible)
+        for out_date in outbound_dates:
             for home in t.home_airports:
                 for dest in params.shared_destinations:
-                    tasks.append(("outbound", t.name, home, dest, date))
+                    tasks.append(("outbound", t.name, home, dest, out_date))
         if not params.one_way:
-            for date in generate_dates(params.inbound_date, t.inbound_flexible):
+            if params.trip_length_min > 0:
+                # Inbound dates = each outbound date + each allowed duration
+                # Deduplicate so the same inbound date is not scraped twice
+                trip_max = params.trip_length_max if params.trip_length_max >= params.trip_length_min else params.trip_length_min
+                inbound_dates = sorted(set(
+                    (datetime.strptime(d, "%Y-%m-%d") + timedelta(days=length)).strftime("%Y-%m-%d")
+                    for d in outbound_dates
+                    for length in range(params.trip_length_min, trip_max + 1)
+                ))
+            else:
+                # Independent inbound flexibility (original behaviour)
+                inbound_dates = generate_dates(params.inbound_date, t.inbound_flexible)
+            for in_date in inbound_dates:
                 for origin in params.shared_inbound_origins:
                     for home in t.home_airports:
-                        tasks.append(("inbound", t.name, origin, home, date))
+                        tasks.append(("inbound", t.name, origin, home, in_date))
 
     total = len(tasks)
 
@@ -1643,10 +1729,36 @@ def build_and_rank_trips(search_results, params, max_combinations=50_000):
         for out_combo in iterproduct(*out_per_t):
             if params.direct_only and any(f.stops != "0" for f in out_combo):
                 continue
+
+            # When trip_length is set, all travellers must share the same
+            # outbound date — otherwise Charlie leaves 2 days before Mike.
+            if params.trip_length_min > 0:
+                out_dates = {f.depart_date for f in out_combo}
+                if len(out_dates) > 1:
+                    continue   # travellers on different outbound dates — skip
+                shared_out_date = out_dates.pop()
+                trip_max = params.trip_length_max if params.trip_length_max >= params.trip_length_min else params.trip_length_min
+                allowed_inb_dates = set(
+                    (datetime.strptime(shared_out_date, "%Y-%m-%d") + timedelta(days=n)).strftime("%Y-%m-%d")
+                    for n in range(params.trip_length_min, trip_max + 1)
+                )
+            else:
+                allowed_inb_dates = None
+
             for orig, inb_per_t in inb_by_orig.items():
                 for inb_combo in iterproduct(*inb_per_t):
                     if params.direct_only and any(f.stops != "0" for f in inb_combo):
                         continue
+
+                    # Enforce trip length range: all inbound legs must share
+                    # the same date AND it must be within the allowed range
+                    if allowed_inb_dates is not None:
+                        inb_dates = {f.depart_date for f in inb_combo}
+                        if len(inb_dates) > 1:
+                            continue   # travellers returning on different days
+                        if inb_dates.pop() not in allowed_inb_dates:
+                            continue   # return date not within allowed range
+
                     key = tuple(
                         (f.traveller, f.origin, f.destination,
                          f.depart_date, f.depart_time, f.price)
